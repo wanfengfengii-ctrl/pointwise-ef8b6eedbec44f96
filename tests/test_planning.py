@@ -3,7 +3,7 @@ import unittest
 from warehouse import Warehouse
 from warehouse.planning.model import PlanValidationError
 from warehouse.results.database import StorageFailure
-from samples import literal, field, ref, call, binding, expand
+from samples import literal, field, ref, call, binding, expand, operation
 
 
 class PlanTests(unittest.TestCase):
@@ -69,6 +69,37 @@ class PlanTests(unittest.TestCase):
         batch = self.w.ingest('r', [{}])
         rows = self.w.read_result(self.w.run(batch.batch_id, plan.plan_revision).run_id).rows
         self.assertEqual(rows[0].values, {'outer': 1, 'inner': 2})
+
+    def test_shadowed_names_do_not_form_a_cycle(self):
+        # Outer fee references the outer serial; the inner serial shadows the
+        # name for the child only.  The two bindings are distinct nodes.
+        plan = self.w.register_plan('p', {
+            'bindings': [binding('fee', ref('serial')),
+                         binding('serial', call('next_ticket'))],
+            'output': [binding('source_fee', ref('fee'))],
+            'expand': expand(literal([0]), {
+                'bindings': [binding('serial', operation('add', ref('fee'), literal(100)))],
+                'output': [binding('item_fee', ref('serial'))]})})
+        root = self.w.plans.get_revision(plan.plan_revision).compiled.root
+        self.assertEqual(root.bindings[0].expr.value.binding_id, 's0:serial')
+        child = root.expand.scope
+        self.assertEqual(child.bindings[0].expr.args[0].value.binding_id, 's0:fee')
+        batch = self.w.ingest('r', [{}])
+        rows = self.w.read_result(self.w.run(batch.batch_id, plan.plan_revision).run_id).rows
+        self.assertEqual(rows[0].values, {'source_fee': 1, 'item_fee': 101})
+
+    def test_genuine_cycles_are_still_rejected(self):
+        self.reject({'bindings': [binding('a', ref('b')), binding('b', ref('a'))]})
+        self.reject({'bindings': [binding('p', literal(1))],
+                     'expand': expand(literal([1]), {
+                         'bindings': [binding('a', ref('b')), binding('b', ref('a'))]})})
+        self.reject({'bindings': [binding('p', literal(1))],
+                     'expand': expand(literal([1]), {
+                         'bindings': [binding('p', ref('p'))]})})
+        # Shadowed self-reference is still a cycle in its own scope.
+        self.reject({'bindings': [binding('x', literal(1))],
+                     'expand': expand(literal([1]), {
+                         'bindings': [binding('x', ref('x'))]})})
 
     def test_atomic_revision_and_snapshot(self):
         data = {'output': [binding('x', literal({'v': [1]}))]}

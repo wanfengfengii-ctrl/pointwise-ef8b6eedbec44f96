@@ -36,7 +36,6 @@ class ScopeDefinition:
     expand: ExpandDefinition | None
     output: tuple
     scope_id: str = ''
-    row_bindings: tuple = ()
 
 
 @dataclass(frozen=True)

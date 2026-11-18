@@ -39,10 +39,12 @@ class ExecutionRunner:
             yield environment.coordinate, self.project_outputs(environment, context)
 
     def project_outputs(self, leaf, context):
+        # Outputs evaluate outer-to-inner in declaration order, each in its
+        # own declaration scope.  Ancestor outputs use the ancestor's cells,
+        # so every retained leaf under the same ancestor reuses its value.
         result = {}
-        for site in leaf.projections:
-            view = leaf.at_projection(site)
-            for output in site.scope.output:
+        for environment in leaf.projections:
+            for output in environment.scope.output:
                 result[output.name] = evaluate_expression(
-                    output.expr, view, context, leaf.coordinate)
+                    output.expr, environment, context, leaf.coordinate)
         return result
